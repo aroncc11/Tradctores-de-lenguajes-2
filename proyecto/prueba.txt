@@ -1,0 +1,32 @@
+// Archivo de prueba para el analizador léxico
+// Incluye identificadores, enteros, reales, cadenas, operadores,
+// delimitadores, palabras reservadas y comentarios.
+
+int contador;
+float promedio;
+char nombre;
+
+contador = 0;
+promedio = 12.5;
+nombre = "Aron";
+
+/* Este es un comentario
+   de varios renglones */
+
+while (contador <= 10) {
+    if (contador != 5 && promedio >= 10.0) {
+        promedio = promedio + 1.5;
+    } else {
+        promedio = promedio - 1;
+    }
+    contador = contador + 1;
+}
+
+if (contador == 10 || promedio < 0.0) {
+    return promedio;
+}
+
+// Las siguientes líneas provocan errores léxicos a propósito,
+// para comprobar que el analizador los reporta sin detenerse:
+x = 3.;
+y @ 2;
