@@ -1,0 +1,239 @@
+"""
+Mini analizador sintáctico (shift-reduce)
+--------------------------------------------
+Seminario de Solución de Problemas de Traductores de Lenguaje II
+(Ing. Michel Emanuel López Franco)
+
+Implementa un analizador sintáctico ascendente tipo shift-reduce
+("desplazar-reducir"), impulsado por una tabla de acciones/GOTO,
+para los dos ejercicios cuyas trazas aparecen en el PDF de
+referencia (columnas "pila | entrada | salida").
+
+    Ejercicio 1 — gramática:
+        E -> id
+        E -> id + id
+
+    Ejercicio 2 — gramática (recursiva a la derecha):
+        E -> id + E
+        E -> id
+
+NOTA sobre el PDF de referencia: el archivo subido a esta
+conversación se llama "LR.pdf" y contiene exactamente las trazas de
+estos dos ejercicios (pila/entrada/salida). Si "PracticaAnalizadorSintactico.pdf"
+tiene un enunciado distinto al de estas trazas, avísame para
+ajustar la gramática o las tablas.
+
+El motor (`AnalizadorSintactico`) es genérico: recibe una tabla
+ACTION, una tabla GOTO y la lista de reglas, y funciona para
+cualquiera de los dos ejercicios (o para una gramática nueva que tú
+definas con el mismo formato).
+"""
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Tuple
+
+
+# ---------------------------------------------------------------------------
+# Tokenizador simple: separa identificadores, '+' y $ (fin de cadena).
+# Cualquier otro carácter (dígitos, símbolos) se marca como no válido,
+# porque ninguna de las dos gramáticas los acepta.
+# ---------------------------------------------------------------------------
+def tokenizar(entrada: str) -> List[Tuple[str, str]]:
+    """Regresa una lista de tokens (tipo, lexema). Al final agrega ('$', '$')."""
+    tokens = []
+    i = 0
+    n = len(entrada)
+    while i < n:
+        c = entrada[i]
+        if c.isspace():
+            i += 1
+            continue
+        if c.isalpha():
+            j = i
+            while j < n and entrada[j].isalpha():
+                j += 1
+            tokens.append(("id", entrada[i:j]))
+            i = j
+            continue
+        if c == "+":
+            tokens.append(("+", "+"))
+            i += 1
+            continue
+        # cualquier otro carácter (dígitos, símbolos) no pertenece a
+        # ninguna de las dos gramáticas -> token "otro"
+        tokens.append(("otro", c))
+        i += 1
+    tokens.append(("$", "$"))
+    return tokens
+
+
+# ---------------------------------------------------------------------------
+# Estructuras de la tabla shift-reduce
+# ---------------------------------------------------------------------------
+@dataclass
+class Regla:
+    numero: int
+    izq: str          # símbolo no terminal (p. ej. "E")
+    derecha: str       # texto descriptivo de la parte derecha, solo para imprimir
+    longitud: int       # cuántos símbolos de la pila se sacan al reducir
+    es_aceptar: bool = False
+
+
+@dataclass
+class Accion:
+    tipo: str          # "shift", "reduce" o "aceptar"
+    valor: int = None  # estado destino (shift) o número de regla (reduce)
+
+
+@dataclass
+class TablaGramatica:
+    nombre: str
+    action: Dict[Tuple[int, str], Accion]
+    goto: Dict[Tuple[int, str], int]
+    reglas: Dict[int, Regla] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Motor genérico shift-reduce
+# ---------------------------------------------------------------------------
+class AnalizadorSintactico:
+    def __init__(self, tabla: TablaGramatica):
+        self.tabla = tabla
+
+    def analizar(self, entrada: str, mostrar_traza: bool = True):
+        tokens = tokenizar(entrada)
+        # la pila guarda pares (símbolo, estado); "$" representa el fondo
+        pila: List[Tuple[str, int]] = [("$", 0)]
+        pos = 0
+
+        if mostrar_traza:
+            print(f"{'pila':<28}{'entrada':<20}salida")
+
+        while True:
+            estado_actual = pila[-1][1]
+            tipo_token, lexema_token = tokens[pos]
+
+            accion = self.tabla.action.get((estado_actual, tipo_token))
+
+            pila_str = "".join(f"{s}{e}" if s != "$" else "$" for s, e in pila)
+            entrada_str = "".join(l for _, l in tokens[pos:])
+
+            if accion is None:
+                if mostrar_traza:
+                    print(f"{pila_str:<28}{entrada_str:<20}error")
+                return False, f"Error sintáctico: token inesperado '{lexema_token}' en la posición {pos}"
+
+            if accion.tipo == "shift":
+                pila.append((lexema_token, accion.valor))
+                pos += 1
+                if mostrar_traza:
+                    print(f"{pila_str:<28}{entrada_str:<20}d{accion.valor}")
+
+            elif accion.tipo == "reduce":
+                regla = self.tabla.reglas[accion.valor]
+                # sacar de la pila tantos símbolos como indique la longitud de la regla
+                for _ in range(regla.longitud):
+                    pila.pop()
+                estado_previo = pila[-1][1]
+                nuevo_estado = self.tabla.goto[(estado_previo, regla.izq)]
+                pila.append((regla.izq, nuevo_estado))
+                if mostrar_traza:
+                    print(f"{pila_str:<28}{entrada_str:<20}r{regla.numero} {regla.izq}->{regla.derecha}")
+
+            elif accion.tipo == "aceptar":
+                if mostrar_traza:
+                    print(f"{pila_str:<28}{entrada_str:<20}r0 (aceptar)")
+                return True, "Cadena aceptada"
+
+
+# ---------------------------------------------------------------------------
+# Ejercicio 1:  E -> id  |  E -> id + id
+# ---------------------------------------------------------------------------
+def construir_ejercicio1() -> TablaGramatica:
+    reglas = {
+        1: Regla(1, "E", "id", longitud=1),
+        2: Regla(2, "E", "id + id", longitud=3),
+    }
+    action = {
+        (0, "id"): Accion("shift", 2),
+        (2, "+"): Accion("shift", 3),
+        (2, "$"): Accion("reduce", 1),
+        (3, "id"): Accion("shift", 4),
+        (4, "$"): Accion("reduce", 2),
+        (1, "$"): Accion("aceptar"),
+    }
+    goto = {
+        (0, "E"): 1,
+    }
+    return TablaGramatica("Ejercicio 1: E -> id | id + id", action, goto, reglas)
+
+
+# ---------------------------------------------------------------------------
+# Ejercicio 2:  E -> id + E  |  E -> id     (recursión derecha)
+# ---------------------------------------------------------------------------
+def construir_ejercicio2() -> TablaGramatica:
+    reglas = {
+        1: Regla(1, "E", "id + E", longitud=3),
+        2: Regla(2, "E", "id", longitud=1),
+    }
+    action = {
+        (0, "id"): Accion("shift", 2),
+        (2, "+"): Accion("shift", 3),
+        (2, "$"): Accion("reduce", 2),
+        (3, "id"): Accion("shift", 2),
+        (4, "$"): Accion("reduce", 1),
+        (1, "$"): Accion("aceptar"),
+    }
+    goto = {
+        (0, "E"): 1,
+        (3, "E"): 4,
+    }
+    return TablaGramatica("Ejercicio 2: E -> id + E | id", action, goto, reglas)
+
+
+# ---------------------------------------------------------------------------
+# Programa de prueba: reproduce los mismos casos del PDF de referencia,
+# y además permite analizar una cadena propia desde la terminal.
+#
+# Uso:
+#   python3 analizador_sintactico.py                 -> corre la demo completa
+#   python3 analizador_sintactico.py 1 "hola+mundo"   -> analiza esa cadena
+#                                                        con el Ejercicio 1
+#   python3 analizador_sintactico.py 2 "a+b+c"        -> con el Ejercicio 2
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    import sys
+
+    ej1 = AnalizadorSintactico(construir_ejercicio1())
+    ej2 = AnalizadorSintactico(construir_ejercicio2())
+
+    if len(sys.argv) >= 3:
+        # Modo: analizar una cadena propia, mostrando el proceso paso a paso
+        numero_ejercicio = sys.argv[1]
+        cadena = sys.argv[2]
+        analizador = ej1 if numero_ejercicio == "1" else ej2
+
+        print(f"Analizando '{cadena}' con el Ejercicio {numero_ejercicio}\n")
+        ok, mensaje = analizador.analizar(cadena)
+        print(f"\n>>> {mensaje}")
+        sys.exit(0 if ok else 1)
+
+    # Modo demo: reproduce los casos del PDF de referencia
+    casos_ej1 = ["a", "hola+mundo", "5"]
+    casos_ej2 = ["a+b+c+d+e+f"]
+
+    print("=" * 60)
+    print("EJERCICIO 1:  E -> id | id + id")
+    print("=" * 60)
+    for caso in casos_ej1:
+        print(f"\nCadena de entrada: '{caso}'")
+        ok, mensaje = ej1.analizar(caso)
+        print(f"Resultado: {mensaje}")
+
+    print("\n" + "=" * 60)
+    print("EJERCICIO 2:  E -> id + E | id")
+    print("=" * 60)
+    for caso in casos_ej2:
+        print(f"\nCadena de entrada: '{caso}'")
+        ok, mensaje = ej2.analizar(caso)
+        print(f"Resultado: {mensaje}")
