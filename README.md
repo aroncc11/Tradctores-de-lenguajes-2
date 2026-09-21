@@ -1,251 +1,375 @@
-# Mini Analizador Léxico
+# Analizador Léxico y Sintáctico (versión unificada)
 
-Este proyecto implementa un analizador léxico sencillo en Python para reconocer dos tipos de elementos:
+Implementación en Python de las dos primeras fases de un traductor
+(compilador/intérprete) para un lenguaje de programación simplificado
+tipo C: declaraciones de variables y funciones, tipos `int`/`float`,
+control de flujo `if`/`else`/`while`, y expresiones aritméticas y
+lógicas.
 
-- Identificadores
-- Números reales
+Todo el código vive en **un solo archivo**, `analizador.py`. Para
+correrlo solo necesitas dos cosas en la misma carpeta:
 
-También detecta errores léxicos cuando encuentra caracteres o secuencias que no cumplen las reglas definidas.
-
----
-
-## 1. ¿Qué es un analizador léxico?
-
-Un analizador léxico, también llamado scanner, es la primera etapa de un compilador o traductor. Su función es leer el código fuente carácter por carácter y dividirlo en unidades llamadas tokens.
-
-Por ejemplo, si el código contiene:
-
-```python
-x1 = 3.1416
+```
+analizador.py
+datos/
+  compilador.lr
 ```
 
-el analizador podría producir tokens como:
-
-- `ID` -> `x1`
-- `REAL` -> `3.1416`
-
-El objetivo es identificar partes importantes del lenguaje antes de que un analizador sintáctico las procese.
+(los archivos `.csv` e `.inf` de `datos/` son de referencia — para
+verlos en Excel o consultar los códigos a mano — pero el programa no
+los necesita para ejecutarse; solo lee `compilador.lr`).
 
 ---
 
-## 2. Reglas que reconoce el programa
+## 1. Qué hace el proyecto
 
-El código está diseñado para reconocer exactamente estas expresiones:
+El archivo tiene dos fases conectadas, una detrás de otra en el mismo
+módulo:
 
-- Identificador: `letra (letra | digito)*`
-- Real: `entero . entero+`
+1. **Analizador léxico** (`analizador_lexico()`) — lee el código
+   fuente carácter por carácter y lo convierte en una secuencia de
+   **tokens** (identificadores, números, operadores, palabras
+   reservadas, etc.), cada uno con su línea y columna.
+2. **Analizador sintáctico** (`AnalizadorSintactico.analizar()`) —
+   toma esa secuencia de tokens (no el texto original) y verifica que
+   forme un programa gramaticalmente válido, usando un análisis
+   ascendente LR (shift-reduce / desplazar-reducir).
 
-Donde:
+Las dos fases están **conectadas de verdad**: el sintáctico nunca
+vuelve a tokenizar nada por su cuenta, usa directamente la salida del
+léxico.
 
-- `letra` = cualquier letra del alfabeto
-- `digito` = cualquier número del 0 al 9
-- `entero` = una secuencia de dígitos
-
-### Ejemplos válidos
-
-- `x`
-- `contador2`
-- `m1x`
-- `3.1416`
-- `25.5`
-- `10.0`
-
-### Ejemplos no válidos
-
-- `8` (porque no se considera un real válido en este programa; exige parte decimal)
-- `3.` (falta al menos un dígito después del punto)
-- `@` o `#` (caracteres no permitidos)
-
----
-
-## 3. Cómo funciona el código
-
-El archivo principal es `Mini Analizador.py`.
-
-### 3.1 Clase `Token`
-
-La clase `Token` representa cada elemento encontrado por el analizador. Tiene estos atributos:
-
-- `tipo`: puede ser `ID`, `REAL` o `ERROR`
-- `lexema`: el texto reconocido
-- `linea`: número de línea donde aparece
-- `columna`: posición inicial en la línea
-
-También tiene un método `__str__` para imprimir el token de manera legible.
-
-### 3.2 Funciones auxiliares
-
-```python
-def es_letra(c):
-    return c.isalpha()
-
-def es_digito(c):
-    return c.isdigit()
+```
+código fuente (texto)
+        │
+        ▼
+  analizador_lexico()   ──────►  tokens (con línea/columna)
+        │                              │
+        │ (errores léxicos             │
+        │  se reportan aparte,         ▼
+        │  no detienen el análisis)  AnalizadorSintactico.analizar()
+        │                              │
+        │                              ▼
+        │                     aceptado (árbol) / error sintáctico
 ```
 
-Estas funciones verifican si un carácter es una letra o un dígito.
-
-### 3.3 Clase `AnalizadorLexico`
-
-La clase principal mantiene el estado del análisis:
-
-- `codigo`: el texto de entrada
-- `pos`: posición actual del cursor dentro del texto
-- `linea`: número de línea actual
-- `columna`: columna actual
-- `tokens`: lista de tokens reconocidos
-- `errores`: lista de mensajes de error
-
-#### Métodos importantes
-
-##### `_caracter_actual()`
-Devuelve el carácter actual en la posición actual del análisis. Si ya terminó el texto, devuelve `None`.
-
-##### `_avanzar()`
-Mueve el cursor al siguiente carácter y actualiza la línea y la columna. Esto permite llevar el control de posiciones exactas.
-
-##### `analizar()`
-Es el método principal. Recorre el código carácter por carácter y decide qué hacer según el caso:
-
-1. Si encuentra espacio, tabulación, salto de línea o retorno de carro, lo ignora.
-2. Si el carácter es una letra, empieza a formar un identificador.
-3. Si el carácter es un dígito, intenta formar un número real.
-4. Si encuentra un carácter no permitido, lo marca como error léxico.
+`analizar_programa()` es la función que amarra todo: corre el
+léxico, filtra los tokens de error antes de pasarlos al sintáctico, y
+arma el reporte final de texto (tokens + errores léxicos + resultado
+sintáctico + árbol).
 
 ---
 
-## 4. Estados del autómata
+## 2. Los tokens del lenguaje
 
-El programa sigue una lógica tipo autómata finito. Los estados aparecen descritos en el encabezado del archivo:
+Cada token tiene un código numérico fijo (0-23), que es el mismo que
+usa la tabla del analizador sintáctico para buscar sus acciones:
 
-- `S0`: estado inicial
-- `S1`: leyendo un identificador
-- `S2`: leyendo la parte entera de un número
-- `S3`: se leyó el punto decimal y espera al menos un dígito
-- `S4`: leyendo la parte decimal del real
+| Código | Token | Patrón / ejemplos |
+|:---:|---|---|
+| 0 | identificador | `letra (letra\|digito)*` |
+| 1 | entero | `digito+` |
+| 2 | real | `entero.entero` (un punto con al menos 1 dígito después) |
+| 3 | cadena | `"texto entre comillas dobles"` |
+| 4 | tipo | `int`, `float`, `void` |
+| 5 | opSuma | `+`, `-` |
+| 6 | opMul | `*`, `/`, `%` |
+| 7 | opRelac | `<`, `>`, `<=`, `>=` |
+| 8 | opOr | `\|\|` |
+| 9 | opAnd | `&&` |
+| 10 | opNot | `!` |
+| 11 | opIgualdad | `==`, `!=` |
+| 12 | `;` | punto y coma |
+| 13 | `,` | coma |
+| 14 / 15 | `(` `)` | paréntesis |
+| 16 / 17 | `{` `}` | llaves |
+| 18 | `=` | asignación |
+| 19-22 | `if`, `while`, `return`, `else` | palabras reservadas |
+| 23 | `$` | fin de la entrada (lo agrega el propio léxico) |
 
-Esta estructura hace que el análisis sea determinista y fácil de seguir.
+Las palabras reservadas se reconocen primero como identificador y
+luego se reclasifican si el lexema coincide con la lista de
+reservadas — así no hace falta un caso especial para cada palabra.
 
 ---
 
-## 5. ¿Qué hace exactamente el programa?
+## 3. Cómo está construido el analizador léxico
 
-El programa:
+`analizador_lexico(src)` reconoce cada categoría de token con una
+**expresión regular** (identificador, entero, real, cadena), probadas
+en orden en cada posición del texto, y regresa una tupla
+`(tokens, errores)`:
 
-- Lee una cadena de texto llamada `codigo_fuente`
-- La recorre carácter por carácter
-- Ignora espacios y saltos de línea
-- Reconoce identificadores
-- Reconoce reales con formato `entero.entero+`
-- Guarda los tokens encontrados junto con su línea y columna
-- Registra los errores léxicos si una secuencia no es válida
-- Muestra el resultado en consola
+- Mantiene un índice de lectura y contadores de línea/columna.
+- El patrón de `real` se intenta **antes** que el de `entero`, para
+  que `12.5` no se reconozca como el entero `12` dejando el `.5`
+  suelto.
+- Reconoce comentarios de línea (`//`) y de bloque (`/* */`), llevando
+  la cuenta de saltos de línea incluso dentro de un comentario
+  multilínea.
+- Los operadores de dos caracteres (`==`, `!=`, `<=`, `>=`, `&&`,
+  `||`) se revisan antes que los de un solo carácter, para no
+  confundir `<=` con `<` seguido de `=`.
+- Cada token reconocido se guarda como un objeto `Tok` (`codigo`,
+  `valor`, `linea`, `columna`).
+
+**Manejo de errores léxicos:** cuando aparece un carácter que no
+encaja en ningún patrón (por ejemplo `@`, `#`), o un número real mal
+formado (un punto sin dígitos después, como `5.`), el error **no
+detiene el análisis** — se agrega a la lista `errores` que regresa la
+función junto con su ubicación exacta, y el analizador sigue leyendo
+el resto del archivo. Esto permite ver *todos* los errores léxicos de
+un archivo en una sola corrida, en vez de tener que corregir uno y
+volver a ejecutar para ver el siguiente.
 
 ---
 
-## 6. Ejemplo de uso
+## 4. Cómo está construido el analizador sintáctico
 
-En la parte final del archivo, hay un bloque de prueba:
+### Lee directamente el archivo `.lr` (formato oficial de la práctica)
 
-```python
-if __name__ == "__main__":
-    codigo_prueba = """
-    x1 = 3.1416
-    contador2 total 25.5
-    y = 8
-    m1x = 10.0
-    """
+Cada gramática tiene tres archivos asociados en `datos/`, pero
+**solo uno lo debe leer el programa**:
 
-    analizador = AnalizadorLexico(codigo_prueba)
-    tokens = analizador.analizar()
+| Archivo | Para qué sirve | ¿Lo lee el programa? |
+|---|---|---|
+| `datos/compilador.csv` | Ver la tabla LR desde Excel | No |
+| `datos/compilador_inf.txt` | Referencia: códigos de token y reglas en texto | No |
+| `datos/compilador.lr` | La tabla LR codificada como matriz de enteros | **Sí** |
+
+`cargar_gramatica_lr()` carga toda la gramática (reglas + tabla de
+estados × columnas) desde `datos/compilador.lr`. El formato es:
+
+```
+<numReglas>
+<numReglas líneas>: idColumnaIzquierda   longitud   nombreIzquierda
+<numFilas> <numColumnas>
+<numFilas líneas de numColumnas enteros>: la tabla LR
 ```
 
-Este ejemplo genera un análisis sobre este texto:
+En la tabla, cada `celda[estado][columna]` es un solo entero:
+positivo = desplazar/ir a ese estado; negativo = reducir con la regla
+`-celda - 1` (si esa regla da `0`, es aceptar); cero = error.
 
-```text
-x1 = 3.1416
-contador2 total 25.5
-y = 8
-m1x = 10.0
+### Sin traducir nombres entre léxico y sintáctico
+
+La columna que se usa para buscar la acción de un **token** es
+directamente su código numérico (`t.codigo`, 0-23) — el mismo que ya
+produce `analizador_lexico()`. La columna para un **GOTO** (tras una
+reducción) es el `idColumnaIzquierda` que la propia regla trae en el
+`.lr`. No hace falta ningún diccionario intermedio que traduzca
+nombres de columna — el léxico y el sintáctico ya "hablan" en los
+mismos números.
+
+### Pila de objetos
+
+La pila no es una lista de enteros ni de tuplas: es una jerarquía de
+clases —
+
+```
+ElementoPila            (clase base abstracta)
+    ├── Terminal        símbolo terminal (identificador, +, ;, ...)
+    ├── NoTerminal        símbolo no terminal (Expresion, Sentencia, ...)
+    └── Estado            número de estado del autómata LR
 ```
 
-### Resultado esperado
+— cada una con su propio método `muestra()`, así que la pila se
+puede imprimir de forma legible en cualquier punto del análisis
+(usa esto internamente `--traza`, ver sección 6).
 
-Se imprime una lista de tokens como:
+### El algoritmo, paso a paso
 
-```text
-=== Tokens reconocidos ===
-<ID, 'x1'>  (línea 2, col 5)
-<REAL, '3.1416'>  (línea 2, col 9)
-...
+En cada paso, `AnalizadorSintactico.analizar()` mira el estado actual
+(la cima de la pila) y consulta `tabla[estado][token.codigo]`:
+
+1. **Celda > 0 → desplazar (shift)** — mete el token a la pila con su
+   nuevo estado, y avanza a leer el siguiente token.
+2. **Celda < 0 y regla ≠ 0 → reducir** — saca de la pila `longitud`
+   símbolos (más su estado cada uno); mete el no terminal
+   correspondiente, buscando el nuevo estado con
+   `tabla[estado_previo][idColumnaIzquierda]`.
+3. **Celda < 0 y regla = 0 → aceptar** — el programa es
+   sintácticamente correcto.
+4. **Celda = 0 → error sintáctico.**
+
+**El árbol sintáctico:** cada vez que se reduce, los símbolos que se
+sacan de la pila no se descartan — se guardan como `hijos` del nuevo
+`NoTerminal` que se crea. Así, cuando el análisis termina en
+"aceptar", `analizar()` regresa la raíz del árbol sintáctico completo
+(el nodo `programa`, con toda su estructura debajo). El método
+`NoTerminal.imprimir_arbol()` lo muestra como árbol de texto con
+conectores (`├──`, `└──`), como en el ejemplo de la sección 8.
+
+**Manejo de errores sintácticos:** a diferencia del léxico, un error
+sintáctico **sí detiene el análisis** de inmediato (excepción
+`ErrorSintactico`), reportando la línea y columna exactas del token
+que no encajaba en ninguna regla. No se intenta "adivinar" cómo
+seguir, porque hacerlo suele producir una cascada de errores falsos
+que no reflejan el problema real.
+
+### El puente entre léxico y sintáctico
+
+`analizar_programa()` conecta ambas fases:
+
+1. Corre `analizador_lexico(codigo_fuente)`.
+2. Descarta del flujo hacia el sintáctico los tokens marcados como
+   error léxico (código `-1`) — no tendría sentido darle significado
+   gramatical a un carácter que ni siquiera es un token válido — pero
+   conserva la lista de errores léxicos para reportarla aparte.
+3. Entrega el resto de los tokens, tal cual, al analizador sintáctico
+   (mismos objetos `Tok`, mismo código numérico).
+
+---
+
+## 5. Estructura de archivos
+
+```
+analizador.py                  Léxico + sintáctico, en un solo módulo
+README.md                      Este archivo
+documento_diseno.md            Documento de diseño (entregable académico)
+datos/
+  compilador.lr                 Tabla LR + reglas (esto SÍ lo lee el programa)
+  compilador.csv                 La misma tabla, para verla en Excel
+  compilador_inf.txt              Códigos de token y reglas, de referencia
+ejemplos/
+  ejemploN_*.txt                   Programas de entrada de muestra
+  salidaN_*.txt                     Salida real que produce el analizador
 ```
 
-Y si hay errores, se muestran mensajes tipo:
+Dentro de `analizador.py`, el código está dividido con separadores en
+tres bloques, en este orden:
 
-```text
-Línea 4, col 9: '8' no es un real válido (falta la parte decimal)
+```
+# FASE 1: ANALIZADOR LÉXICO        -> Tok, códigos de token, analizador_lexico()
+# FASE 2: ANALIZADOR SINTÁCTICO    -> ElementoPila, GramaticaLR, AnalizadorSintactico, analizar_programa()
+# INTERFAZ DE LÍNEA DE COMANDOS     -> main(), argparse
 ```
 
 ---
 
-## 7. Importante sobre el comportamiento actual
+## 6. Cómo correrlo
 
-Este programa está hecho para una gramática muy específica. Por eso:
-
-- `x1` se reconoce como identificador
-- `3.1416` se reconoce como real
-- `25.5` se reconoce como real
-- `8` no se acepta como real válido, porque la regla exige la parte decimal
-- `3.` genera error porque después del punto debe haber al menos un dígito
-
-Esto es clave para entender que el analizador no es un analizador de números enteros, sino de reales con el formato que se definió en el enunciado.
-
----
-
-## 8. Estructura del programa
-
-El código está organizado de forma clara en secciones:
-
-1. Comentario inicial con descripción del problema
-2. Definición de `Token`
-3. Funciones de clasificación de caracteres
-4. Clase `AnalizadorLexico`
-5. Bloque de prueba principal
-
-Esto facilita su lectura y posible modificación.
-
----
-
-## 9. Cómo ejecutar el programa
-
-Desde la terminal, ubícate en la carpeta del proyecto y ejecuta:
+Analizar cualquier archivo de código fuente (pipeline completo,
+léxico + sintáctico):
 
 ```bash
-python "Mini Analizador.py"
+python3 analizador.py ejemplos/ejemplo1_valido.txt
 ```
 
-En Windows PowerShell puede ser:
+Esto imprime, en orden:
 
-```powershell
-python .\"Mini Analizador.py\"
+1. La lista de tokens reconocidos, con línea y columna.
+2. Los errores léxicos encontrados (o "Ninguno").
+3. El resultado del análisis sintáctico: aceptado (con el árbol
+   sintáctico completo), o el error sintáctico con su ubicación
+   exacta.
+
+Sin argumentos, corre con un programa de ejemplo incluido en el
+propio archivo:
+
+```bash
+python3 analizador.py
 ```
 
-O, si tienes Python asociado como `py`:
+Para ver el análisis sintáctico **paso a paso** (pila / entrada /
+acción shift-reduce, útil para depurar o para explicar el
+funcionamiento del autómata LR):
 
-```powershell
-py .\"Mini Analizador.py\"
+```bash
+python3 analizador.py ejemplos/ejemplo1_valido.txt --traza
+```
+
+Si la carpeta `datos/` no está junto al script (por ejemplo, la
+moviste a otro lugar), indícalo con `--datos`:
+
+```bash
+python3 analizador.py mi_codigo.txt --datos /ruta/a/datos
+```
+
+Para analizar tu propio código y guardar la salida:
+
+```bash
+python3 analizador.py mi_codigo.txt > mi_salida.txt
+```
+
+Ver todas las opciones disponibles:
+
+```bash
+python3 analizador.py --help
 ```
 
 ---
 
-## 10. Conclusión
+## 7. Ejemplos incluidos
 
-Este proyecto demuestra de manera práctica cómo se construye un analizador léxico básico en Python. Permite entender conceptos clave como:
+Diez programas de muestra (7 originales + 3 nuevos): 4 se aceptan sin
+problema (`ejemplo1`, `4`, `5`, `8`) y 6 están diseñados a propósito
+para fallar (`ejemplo2`, `3`, `6`, `7`, `9`, `10`), cada uno mostrando
+un tipo de error distinto.
 
-- reconocimiento de tokens
-- recorrido de cadenas
-- control de líneas y columnas
-- manejo de errores léxicos
-- diseño de un autómata finito simple
+| Archivo | Qué prueba | Resultado esperado |
+|---|---|---|
+| `ejemplo1_valido.txt` | Programa completo: declaraciones, función con parámetros, `while`, `if/else`, llamada a función | ✅ Aceptado |
+| `ejemplo2_error_lexico.txt` | Real mal formado (`3.`) y carácter inválido (`@`) | ❌ 2 errores léxicos; falla también en sintáctico por los tokens faltantes |
+| `ejemplo3_error_sintactico.txt` | Falta un `;` entre dos declaraciones | ❌ Error sintáctico, token inesperado |
+| `ejemplo4_funciones_anidadas.txt` | Una función llama a otra dentro de una expresión | ✅ Aceptado |
+| `ejemplo5_expresiones_complejas.txt` | Paréntesis, operador unario `-`, `!`, combinaciones de `&&`/`\|\|` | ✅ Aceptado |
+| `ejemplo6_multiples_errores_lexicos.txt` | 3 errores léxicos distintos (`5.`, `#`, `?`) en un mismo archivo | ❌ Los 3 se reportan juntos, en una sola pasada |
+| `ejemplo7_error_sintactico_parentesis.txt` | Falta cerrar el paréntesis de la condición de un `if` | ❌ Error sintáctico, token inesperado |
+| `ejemplo8_valido.txt` | Lista de variables con coma (`int a, b;`), tipo `char`, cadena, función con dos parámetros, llamada a función como sentencia, `if` sin llaves ni `else`, y `return` sin valor | ✅ Aceptado |
+| `ejemplo9_error_lexico_comentario.txt` | Comentario de bloque (`/* ... */`) que nunca se cierra | ❌ 1 error léxico ("comentario de bloque sin cerrar"); el analizador ya no puede leer el resto del archivo con confianza, así que también falla el sintáctico (token inesperado `$`, falta el `}` que quedó del otro lado del comentario) |
+| `ejemplo10_error_sintactico_asignacion.txt` | Se escribe `if (x = 10)` en vez de `if (x == 10)` — el error clásico de confundir asignación con comparación | ❌ Error sintáctico: `=` no es válido dentro de una `<Expresion>` |
 
-Es un ejemplo muy útil para empezar a estudiar compiladores, traductores de lenguaje y teoría de automatas.
+Los ejemplos 9 y 10 muestran dos tipos de fallo distintos a los de los
+ejemplos 2, 3, 6 y 7: el 9 es un error léxico que además **arrastra**
+un error sintáctico (por la pérdida de contenido), y el 10 es un error
+puramente sintáctico con el léxico limpio (todos los tokens son
+válidos, pero el orden no encaja en la gramática).
+
+Cada `ejemploN_*.txt` tiene su `salidaN_*.txt` correspondiente con la
+salida **real** que produce `analizador.py` (no una salida esperada
+escrita a mano) — tokens, errores, y para los casos aceptados, el
+árbol sintáctico completo. Para regenerarla, o probar con tu propio
+código:
+
+```bash
+python3 analizador.py ejemplos/ejemploN_*.txt > ejemplos/salidaN_*.txt
+```
+
+Ejemplo de cómo se ve el árbol sintáctico para `int a; float b;`:
+
+```
+└── programa
+    └── Definiciones
+        ├── Definicion
+        │   └── DefVar
+        │       ├── int
+        │       ├── a
+        │       ├── ListaVar
+        │       └── ;
+        └── Definiciones
+            ├── Definicion
+            │   └── DefVar
+            │       ├── float
+            │       ├── b
+            │       ├── ListaVar
+            │       └── ;
+            └── Definiciones
+```
+
+---
+
+## 8. Limitaciones conocidas
+
+- El patrón de `cadena` (texto entre comillas dobles) se asumió por
+  convención; la especificación no detalla si admite escapes como
+  `\"`.
+- La palabra reservada `void` se agrupó bajo el token `tipo` junto
+  con `int` y `float`, aunque no aparecía explícitamente en la lista
+  original de palabras reservadas.
+- El analizador sintáctico se detiene en el primer error (no
+  implementa recuperación de errores sintácticos), a diferencia del
+  léxico, que sí reporta todos los errores en una sola pasada.
+
+Ver `documento_diseno.md` para la explicación completa de por qué se
+tomó cada una de estas decisiones.
